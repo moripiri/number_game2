@@ -133,6 +133,41 @@ function fractionEqualsInt(frac: Fraction, target: number): boolean {
   return frac.n === BigInt(target) * frac.d
 }
 
+type ExpressionInput = { numbers: number[]; ops: Op[] } | string
+
+function normalizeExpressionString(expr: string): string {
+  return expr
+    .replace(/\s+/g, '')
+    .replace(/×/g, '*')
+    .replace(/÷/g, '/')
+    .replace(/−/g, '-')
+}
+
+function parseExpression(expr: string): { numbers: number[]; ops: Op[] } {
+  const cleaned = normalizeExpressionString(expr)
+  const tokens = cleaned.match(/\d+|[+\-*/]/g)
+  if (!tokens) return { numbers: [], ops: [] }
+  const numbers: number[] = []
+  const ops: Op[] = []
+  let expectNumber = true
+  for (const token of tokens) {
+    if (expectNumber) {
+      if (!/^\d+$/.test(token)) return { numbers: [], ops: [] }
+      numbers.push(Number(token))
+    } else {
+      if (!/^[+\-*/]$/.test(token)) return { numbers: [], ops: [] }
+      ops.push(token as Op)
+    }
+    expectNumber = !expectNumber
+  }
+  return { numbers, ops }
+}
+
+function evaluateExpression(input: ExpressionInput): Fraction {
+  const parsed = typeof input === 'string' ? parseExpression(input) : input
+  return evalNoParens(parsed.numbers, parsed.ops)
+}
+
 function formatOp(op: Op): string {
   switch (op) {
     case '+':
@@ -148,6 +183,32 @@ function formatOp(op: Op): string {
 
 function classNames(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ')
+}
+
+function buildExpressionString(numbers: number[], ops: Op[]): string {
+  if (numbers.length === 0) return ''
+  let out = String(numbers[0]!)
+  for (let i = 0; i < ops.length; i += 1) {
+    out += `${formatOp(ops[i]!)}${numbers[i + 1]!}`
+  }
+  return out
+}
+
+function runEvalSelfTest(): void {
+  const cases: Array<[string, number]> = [
+    ['7*5*1+4', 39],
+    ['7*5+4*1', 39],
+    ['7×5×1+4', 39],
+    ['7×5+4×1', 39],
+  ]
+  for (const [expr, expected] of cases) {
+    const result = evaluateExpression(expr)
+    // Dev-only sanity check for operator normalization.
+    console.assert(
+      fractionEqualsInt(result, expected),
+      `Eval self-test failed for "${expr}"`,
+    )
+  }
 }
 
 const answerLoaders = import.meta.glob<string>('../game_logic/answers/k*/*.txt', {
@@ -377,7 +438,8 @@ export default function App() {
       }
     }
     if (numbers.length !== round.k || ops.length !== round.k - 1) return null
-    const value = evalNoParens(numbers, ops)
+    const expression = buildExpressionString(numbers, ops)
+    const value = evaluateExpression(expression)
     return { numbers, ops, value }
   }, [numberById, round, slots])
 
@@ -575,6 +637,11 @@ export default function App() {
     startNewRound()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!DEV_CHEAT) return
+    runEvalSelfTest()
+  }, [DEV_CHEAT])
 
   useEffect(() => {
     const audio = ensureAudio()
