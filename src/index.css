@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+:root {
+  --accent: #c8b653;
+  --success: #6ca965;
+  --neutral: #787c7f;
+  --text: #000000;
+  --bg: #f3f3f2;
+  --surface: #ffffff;
+  --surface-2: #f7f6f4;
+  --border: #d6d6d4;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}
