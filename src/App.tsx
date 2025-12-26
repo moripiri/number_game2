@@ -462,7 +462,7 @@ export default function App() {
 
   function ensureAudio(): HTMLAudioElement {
     if (audioRef.current) return audioRef.current
-    const audio = new Audio('/music.mp3')
+    const audio = new Audio('/Cha Cappella - Jimmy Fontanez_Media Right Productions.mp3')
     audio.loop = true
     audio.volume = audioPrefs.bgmVolume
     audioRef.current = audio
