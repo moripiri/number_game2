@@ -326,6 +326,7 @@ export default function App() {
     (['+', '-', '*', '/'] as const).map((op) => ({ id: newId(), op })),
   )
   const solveTimerRef = useRef<number | null>(null)
+  const hasSolvedRef = useRef(false)
   const [draggingType, setDraggingType] = useState<'number' | 'op' | null>(null)
 
   const [audioPanelOpen, setAudioPanelOpen] = useState(false)
@@ -375,6 +376,7 @@ export default function App() {
       const next = await loadRoundFromAnswers()
       setRound(next)
       setSlots(initialSlots())
+      hasSolvedRef.current = false
     } catch (e) {
       setRound(null)
       setLoadError(e instanceof Error ? e.message : 'Failed to load puzzle.')
@@ -566,6 +568,8 @@ export default function App() {
 
   const triggerSolve = useCallback(() => {
     if (celebrating) return
+    if (hasSolvedRef.current) return
+    hasSolvedRef.current = true
     setCelebrating(true)
     setSolvedCount((n) => n + 1)
     playSfxSuccess()
