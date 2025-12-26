@@ -18,6 +18,21 @@ type Round = {
   target: number
   numbers: NumberTile[]
   sampleSolution: string
+  k: number
+}
+
+type Difficulty = 'easy' | 'medium' | 'hard'
+
+const difficultyToK: Record<Difficulty, number> = {
+  easy: 3,
+  medium: 4,
+  hard: 5,
+}
+
+const difficultyToScore: Record<Difficulty, number> = {
+  easy: 1,
+  medium: 2,
+  hard: 3,
 }
 
 type Fraction = { n: bigint; d: bigint }
@@ -90,28 +105,28 @@ function applyFractionOp(a: Fraction, b: Fraction, op: Op): Fraction {
   }
 }
 
-function evalNoParens3(a: number, op1: Op, b: number, op2: Op, c: number): Fraction {
-  const A = intFrac(a)
-  const B = intFrac(b)
-  const C = intFrac(c)
+function evalNoParens(numbers: number[], ops: Op[]): Fraction {
+  if (numbers.length === 0) return intFrac(0)
+  const stackNums: Fraction[] = [intFrac(numbers[0]!)]
+  const stackOps: Op[] = []
 
-  const op1Low = op1 === '+' || op1 === '-'
-  const op2High = op2 === '*' || op2 === '/'
-  const op1High = op1 === '*' || op1 === '/'
-  const op2Low = op2 === '+' || op2 === '-'
-
-  if (op1Low && op2High) {
-    const bc = applyFractionOp(B, C, op2)
-    return applyFractionOp(A, bc, op1)
+  for (let i = 0; i < ops.length; i += 1) {
+    const op = ops[i]!
+    const next = intFrac(numbers[i + 1]!)
+    if (op === '*' || op === '/') {
+      const prev = stackNums.pop()!
+      stackNums.push(applyFractionOp(prev, next, op))
+    } else {
+      stackOps.push(op)
+      stackNums.push(next)
+    }
   }
 
-  if (op1High && op2Low) {
-    const ab = applyFractionOp(A, B, op1)
-    return applyFractionOp(ab, C, op2)
+  let result = stackNums[0]!
+  for (let i = 0; i < stackOps.length; i += 1) {
+    result = applyFractionOp(result, stackNums[i + 1]!, stackOps[i]!)
   }
-
-  const ab = applyFractionOp(A, B, op1)
-  return applyFractionOp(ab, C, op2)
+  return result
 }
 
 function fractionEqualsInt(frac: Fraction, target: number): boolean {
@@ -135,18 +150,20 @@ function classNames(...parts: Array<string | false | null | undefined>): string 
   return parts.filter(Boolean).join(' ')
 }
 
-const answerLoaders = import.meta.glob<string>('../game_logic/answers/*.txt', {
+const answerLoaders = import.meta.glob<string>('../game_logic/answers/k*/*.txt', {
   query: '?raw',
   import: 'default',
 })
 
-function buildAnswerIndex(): Map<number, () => Promise<string>> {
-  const idx = new Map<number, () => Promise<string>>()
+function buildAnswerIndex(): Map<number, Map<number, () => Promise<string>>> {
+  const idx = new Map<number, Map<number, () => Promise<string>>>()
   for (const [path, loader] of Object.entries(answerLoaders)) {
-    const name = path.split('/').pop() ?? ''
-    const m = /^(\d+)\.txt$/.exec(name)
+    const m = /\/k(\d+)\/(\d+)\.txt$/.exec(path)
     if (!m) continue
-    idx.set(Number(m[1]), loader)
+    const k = Number(m[1])
+    const target = Number(m[2])
+    if (!idx.has(k)) idx.set(k, new Map())
+    idx.get(k)!.set(target, loader)
   }
   return idx
 }
@@ -157,19 +174,23 @@ function randomChoice<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)]!
 }
 
-function parseNumbersFromSolution(solution: string): number[] {
+function parseNumbersFromSolution(solution: string, k: number): number[] {
   const nums = Array.from(solution.matchAll(/\d+/g), (m) => Number(m[0]))
-  if (nums.length !== 3) throw new Error(`Expected 3 numbers in solution: ${solution}`)
+  if (nums.length !== k) {
+    throw new Error(`Expected ${k} numbers in solution: ${solution}`)
+  }
   return nums
 }
 
-async function loadRoundFromAnswers(): Promise<Round> {
-  const targets = Array.from(answerIndex.keys()).filter((t) => t >= 1 && t <= 99)
+async function loadRoundFromAnswers(k: number): Promise<Round> {
+  const dir = answerIndex.get(k)
+  if (!dir) throw new Error(`No answer directory for k=${k}`)
+  const targets = Array.from(dir.keys()).filter((t) => t >= 1 && t <= 99)
   if (targets.length === 0) throw new Error('No answer files found.')
 
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const target = randomChoice(targets)
-    const loader = answerIndex.get(target)
+    const loader = dir.get(target)
     if (!loader) continue
     const raw = await loader()
     const lines = raw
@@ -179,9 +200,9 @@ async function loadRoundFromAnswers(): Promise<Round> {
     if (lines.length === 0) continue
 
     const sampleSolution = randomChoice(lines)
-    const values = shuffle(parseNumbersFromSolution(sampleSolution))
+    const values = shuffle(parseNumbersFromSolution(sampleSolution, k))
     const numbers = values.map((value) => ({ id: newId(), value }))
-    return { target, numbers, sampleSolution }
+    return { target, numbers, sampleSolution, k }
   }
 
   throw new Error('Unable to find a solvable target (too many empty files).')
@@ -255,25 +276,19 @@ function tileBaseClasses(kind: 'number' | 'op'): string {
   )
 }
 
-type SlotIndex = 0 | 1 | 2 | 3 | 4
-type Slots = {
-  0: string | null
-  1: Op | null
-  2: string | null
-  3: Op | null
-  4: string | null
+type SlotIndex = number
+type Slots = Array<string | Op | null>
+
+function initialSlots(k: number): Slots {
+  return Array.from({ length: 2 * k - 1 }, () => null)
 }
 
-function initialSlots(): Slots {
-  return { 0: null, 1: null, 2: null, 3: null, 4: null }
+function isNumberSlot(i: SlotIndex): boolean {
+  return i % 2 === 0
 }
 
-function isNumberSlot(i: SlotIndex): i is 0 | 2 | 4 {
-  return i === 0 || i === 2 || i === 4
-}
-
-function isOpSlot(i: SlotIndex): i is 1 | 3 {
-  return i === 1 || i === 3
+function isOpSlot(i: SlotIndex): boolean {
+  return i % 2 === 1
 }
 
 function pointInRect(p: { x: number; y: number }, rect: DOMRect): boolean {
@@ -319,8 +334,10 @@ export default function App() {
   const [loadingRound, setLoadingRound] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
+  const [difficulty, setDifficulty] = useState<Difficulty>('medium')
+  const currentK = difficultyToK[difficulty]
   const [solvedCount, setSolvedCount] = useState(0)
-  const [slots, setSlots] = useState<Slots>(initialSlots)
+  const [slots, setSlots] = useState<Slots>(() => initialSlots(currentK))
   const [celebrating, setCelebrating] = useState(false)
   const [operatorTiles, setOperatorTiles] = useState<OperatorTile[]>(() =>
     (['+', '-', '*', '/'] as const).map((op) => ({ id: newId(), op })),
@@ -335,13 +352,7 @@ export default function App() {
   const sfxContextRef = useRef<AudioContext | null>(null)
 
   const trayRef = useRef<HTMLDivElement | null>(null)
-  const slotRefs = useRef<Record<SlotIndex, HTMLDivElement | null>>({
-    0: null,
-    1: null,
-    2: null,
-    3: null,
-    4: null,
-  })
+  const slotRefs = useRef<Array<HTMLDivElement | null>>([])
 
   const numberById = useMemo(() => {
     const map = new Map<string, NumberTile>()
@@ -351,31 +362,38 @@ export default function App() {
 
   const attempt = useMemo(() => {
     if (!round) return null
-    const aId = slots[0]
-    const bId = slots[2]
-    const cId = slots[4]
-    const op1 = slots[1]
-    const op2 = slots[3]
-    if (!aId || !bId || !cId || !op1 || !op2) return null
-    const a = numberById.get(aId)?.value
-    const b = numberById.get(bId)?.value
-    const c = numberById.get(cId)?.value
-    if (a === undefined || b === undefined || c === undefined) return null
-    const value = evalNoParens3(a, op1, b, op2, c)
-    return { a, b, c, op1, op2, value }
+    const numbers: number[] = []
+    const ops: Op[] = []
+    for (let i = 0; i < slots.length; i += 1) {
+      const slot = slots[i]
+      if (isNumberSlot(i)) {
+        if (!slot) return null
+        const value = numberById.get(slot as string)?.value
+        if (value === undefined) return null
+        numbers.push(value)
+      } else {
+        if (!slot) return null
+        ops.push(slot as Op)
+      }
+    }
+    if (numbers.length !== round.k || ops.length !== round.k - 1) return null
+    const value = evalNoParens(numbers, ops)
+    return { numbers, ops, value }
   }, [numberById, round, slots])
 
   const canDrag = round !== null && !loadingRound && !celebrating
   const tileTextClass = 'text-2xl'
 
-  const startNewRound = useCallback(async () => {
+  const startNewRound = useCallback(
+    async (nextDifficulty?: Difficulty) => {
+      const nextK = difficultyToK[nextDifficulty ?? difficulty]
     if (loadingRound) return
     setLoadingRound(true)
     setLoadError(null)
     try {
-      const next = await loadRoundFromAnswers()
+      const next = await loadRoundFromAnswers(nextK)
       setRound(next)
-      setSlots(initialSlots())
+      setSlots(initialSlots(nextK))
       hasSolvedRef.current = false
     } catch (e) {
       setRound(null)
@@ -384,15 +402,16 @@ export default function App() {
       setCelebrating(false)
       setLoadingRound(false)
     }
-  }, [loadingRound])
+    },
+    [difficulty, loadingRound],
+  )
 
   function resetSolved(): void {
     setSolvedCount(0)
   }
 
   function findDropSlot(point: { x: number; y: number }): SlotIndex | null {
-    const all: SlotIndex[] = [0, 1, 2, 3, 4]
-    for (const i of all) {
+    for (let i = 0; i < slots.length; i += 1) {
       const el = slotRefs.current[i]
       if (!el) continue
       const rect = el.getBoundingClientRect()
@@ -407,11 +426,11 @@ export default function App() {
     return pointInRect(point, el.getBoundingClientRect())
   }
 
-  function placeNumber(tileId: string, slot: 0 | 2 | 4, allowOverwrite = false): void {
+  function placeNumber(tileId: string, slot: SlotIndex, allowOverwrite = false): void {
     setSlots((prev) => {
       if (!allowOverwrite && prev[slot] !== null) return prev
-      const next: Slots = { ...prev }
-      for (const i of [0, 2, 4] as const) {
+      const next = prev.slice()
+      for (let i = 0; i < next.length; i += 2) {
         if (next[i] === tileId) next[i] = null
       }
       next[slot] = tileId
@@ -419,17 +438,19 @@ export default function App() {
     })
   }
 
-  function setOp(slot: 1 | 3, op: Op | null, allowOverwrite = false): void {
+  function setOp(slot: SlotIndex, op: Op | null, allowOverwrite = false): void {
     setSlots((prev) => {
       if (!allowOverwrite && op !== null && prev[slot] !== null) return prev
-      return { ...prev, [slot]: op }
+      const next = prev.slice()
+      next[slot] = op
+      return next
     })
   }
 
-  function moveNumber(tileId: string, from: 0 | 2 | 4, to: 0 | 2 | 4): void {
+  function moveNumber(tileId: string, from: SlotIndex, to: SlotIndex): void {
     setSlots((prev) => {
       if (prev[to] !== null) return prev
-      const next: Slots = { ...prev }
+      const next = prev.slice()
       if (next[from] === tileId) {
         next[from] = null
         next[to] = tileId
@@ -438,10 +459,10 @@ export default function App() {
     })
   }
 
-  function moveOp(op: Op, from: 1 | 3, to: 1 | 3): void {
+  function moveOp(op: Op, from: SlotIndex, to: SlotIndex): void {
     setSlots((prev) => {
       if (prev[to] !== null) return prev
-      const next: Slots = { ...prev }
+      const next = prev.slice()
       if (next[from] === op) {
         next[from] = null
         next[to] = op
@@ -571,7 +592,7 @@ export default function App() {
     if (hasSolvedRef.current) return
     hasSolvedRef.current = true
     setCelebrating(true)
-    setSolvedCount((n) => n + 1)
+    setSolvedCount((n) => n + difficultyToScore[difficulty])
     playSfxSuccess()
     const ms = prefersReducedMotion ? 0 : 900
     if (solveTimerRef.current !== null) {
@@ -582,7 +603,7 @@ export default function App() {
       setCelebrating(false)
       void startNewRound()
     }, ms)
-  }, [celebrating, prefersReducedMotion, startNewRound])
+  }, [celebrating, prefersReducedMotion, startNewRound, difficulty])
 
   useEffect(() => {
     if (!round || !attempt) return
@@ -632,6 +653,12 @@ export default function App() {
     setSfxVolume(v)
   }
 
+  function onDifficultyChange(next: Difficulty): void {
+    if (next === difficulty) return
+    setDifficulty(next)
+    void startNewRound(next)
+  }
+
   return (
     <div
       className="min-h-dvh bg-[color:var(--bg)] text-[color:var(--text)]"
@@ -679,7 +706,24 @@ export default function App() {
             </div>
 
             <div className="relative flex items-center justify-end gap-2">
-              <GhostButton onClick={startNewRound} disabled={loadingRound || celebrating}>
+              <div className="flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--surface)] px-1 py-1">
+                {(['easy', 'medium', 'hard'] as const).map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => onDifficultyChange(level)}
+                    className={classNames(
+                      'min-h-8 rounded-full px-2 text-[11px] font-semibold uppercase tracking-wide transition',
+                      level === difficulty
+                        ? 'bg-[color:var(--accent)] text-[color:var(--text)]'
+                        : 'text-[color:var(--neutral)] hover:text-[color:var(--text)]',
+                    )}
+                  >
+                    {level === 'easy' ? 'Easy' : level === 'medium' ? 'Medium' : 'Hard'}
+                  </button>
+                ))}
+              </div>
+              <GhostButton onClick={() => void startNewRound()} disabled={loadingRound || celebrating}>
                 ↻
               </GhostButton>
               <IconButton
@@ -735,11 +779,11 @@ export default function App() {
               transition={{ duration: 0.35 }}
             >
               <div className="flex flex-wrap items-center gap-2">
-                {([0, 1, 2, 3, 4] as const).map((i) => {
+                {Array.from({ length: slots.length }, (_, i) => i).map((i) => {
                   const isNum = isNumberSlot(i)
                   const isOp = isOpSlot(i)
-                  const filledNumberId = isNum ? slots[i] : null
-                  const filledOp = isOp ? slots[i] : null
+                  const filledNumberId = isNum ? (slots[i] as string | null) : null
+                  const filledOp = isOp ? (slots[i] as Op | null) : null
                   const highlight =
                     draggingType === 'number'
                       ? isNum && filledNumberId === null
@@ -776,14 +820,18 @@ export default function App() {
                           onDragEnd={(_, info) => {
                             setDraggingType(null)
                             if (!canDrag) return
-                            const originSlot: 0 | 2 | 4 = i as 0 | 2 | 4
+                            const originSlot: SlotIndex = i
                             const point = { x: info.point.x, y: info.point.y }
                             const drop = findDropSlot(point)
                             if (drop !== null && isNumberSlot(drop)) {
                               moveNumber(filledNumberId, originSlot, drop)
                               playSfxClick()
                             } else if (droppedInTray(point)) {
-                              setSlots((prev) => ({ ...prev, [originSlot]: null }))
+                              setSlots((prev) => {
+                                const next = prev.slice()
+                                next[originSlot] = null
+                                return next
+                              })
                             } else {
                               // revert to origin (no-op)
                             }
@@ -811,7 +859,7 @@ export default function App() {
                           onDragEnd={(_, info) => {
                             setDraggingType(null)
                             if (!canDrag) return
-                            const originSlot: 1 | 3 = i as 1 | 3
+                            const originSlot: SlotIndex = i
                             const point = { x: info.point.x, y: info.point.y }
                             const drop = findDropSlot(point)
                             if (drop !== null && isOpSlot(drop)) {
@@ -869,7 +917,7 @@ export default function App() {
 
             <div className="mt-3 flex flex-wrap gap-3">
               {(round?.numbers ?? []).map((t) => {
-                const placed = slots[0] === t.id || slots[2] === t.id || slots[4] === t.id
+                const placed = slots.some((slot, idx) => isNumberSlot(idx) && slot === t.id)
                 return (
                   <motion.div
                     key={t.id}

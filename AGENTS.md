@@ -28,20 +28,32 @@ Instructions for coding agents working in this repository.
 - Keep gameplay logic in pure functions (no React imports) so it’s easy to test and reuse.
 
 ## Game Rules
-- Round: exactly 3 distinct numbers, each in `1..9`, used exactly once.
-- Operators: exactly 2 operators chosen from `+ - * /` (operators may repeat).
-- Expression shape: `a op1 b op2 c` only (no parentheses).
-- Evaluation: standard precedence (`*` and `/` before `+` and `-`), left-to-right within the same precedence.
+- Solutions live under `game_logic/answers/k3/`, `game_logic/answers/k4/`, `game_logic/answers/k5/`.
+- Difficulty mapping:
+  - Easy → `k=3` → `game_logic/answers/k3/`
+  - Medium → `k=4` → `game_logic/answers/k4/`
+  - Hard → `k=5` → `game_logic/answers/k5/`
+- Round (by difficulty):
+  - number count = `k` (distinct numbers, each used exactly once)
+  - operator count = `k-1` (chosen from `+ - * /`, repeats allowed)
+  - expression slots = `2*k-1` (index 0,2,4,... numbers; 1,3,5,... operators)
+- Expression shape: no parentheses; evaluate with standard precedence (`*` and `/` before `+` and `-`), left-to-right within the same precedence.
 - Fractions: allowed; division may produce non-integers (use exact rational arithmetic, not floats).
-- Target: integer in `1..99`.
-- Guarantee solvable: choose a `target` whose `game_logic/answers/<target>.txt` has ≥1 line, then choose one solution line and use its three numbers (shuffled) as the given numbers for the round.
-- Win: player’s expression evaluates exactly to the target.
+- Target: integer derived from the filename (`<target>.txt`).
+- Guarantee solvable:
+  1) choose a target file with ≥1 line
+  2) pick one solution line
+  3) extract numbers from the line
+  4) shuffle numbers for the given tiles
+- Win: player’s expression evaluates exactly to the target (do not compare to stored solution line).
 
 ## Puzzle Generation
-- Use precomputed solutions under `game_logic/answers/`:
-  - choose a random target `1..99` whose file has ≥1 solution line
-  - pick one solution line and extract its 3 numbers (shuffle for display)
-  - store the sampled solution line for optional “show solution” UX
+- Use precomputed solutions under `game_logic/answers/k{3|4|5}/` based on difficulty:
+  - scan the difficulty directory for target files with ≥1 solution line
+  - pick one target file at random
+  - pick one solution line at random
+  - extract the ordered numbers from the line, then shuffle for tiles
+  - set target from the filename (not from the expression text)
 
 ## UI / UX (Main Screen)
 - Overall: centered, card-based layout; polished mobile puzzle app feel (NYT/Wordle-like: clean, trustworthy, restrained).
@@ -50,10 +62,11 @@ Instructions for coding agents working in this repository.
   - Center: solved puzzle count.
   - Right: audio control button (volume/slider icon) that opens/contains the combined toggle+volume slider control.
 - Reset: clicking `Reset` sets solved count to `0`.
-- Central slots: 5 horizontal slots:
-  - Slots 1/3/5 are number slots (square).
-  - Slots 2/4 are operator slots (circle).
+- Central slots: `2*k-1` horizontal slots:
+  - Slots 0,2,4,... are number slots (square).
+  - Slots 1,3,5,... are operator slots (circle).
   - Shapes must be visually distinct and readable on mobile.
+- Target appears at the end of the expression row; target container height matches number slot height.
 - Tile tray (bottom area): draggable tiles:
   - number tiles are square
   - operator tiles (`+ − × ÷`) are circular/rounded
@@ -64,6 +77,9 @@ Instructions for coding agents working in this repository.
   - briefly shake the placed tiles (subtle animation)
   - start a new puzzle immediately after the animation
 - Components: prefer `shadcn/ui`-style components/patterns where practical (Card, Button, Slider, Dialog/Popover), while keeping bundle size and mobile performance in mind.
+ - Difficulty selector:
+   - add a top-right selector (Easy / Medium / Hard)
+   - changing difficulty immediately starts a new puzzle from the corresponding `k` directory
 
 ## UI/Animation Guidelines
 - Tailwind-first styling; avoid large bespoke CSS unless necessary.
@@ -71,12 +87,14 @@ Instructions for coding agents working in this repository.
 - Use `AnimatePresence` for screen transitions; keep animations fast and responsive.
 - Prefer motion that stays smooth on mid-range mobile (animate `transform`/`opacity`, avoid layout-thrashing).
 
-## Audio (Background Music)
+## Audio
 - Background music file: `public/music.mp3`.
-- Autoplay: do not attempt to start audio on page load (mobile browsers block it); start/resume only after an explicit user gesture (e.g. tapping “Start” or a music toggle).
-- Controls: provide a single combined audio control (music on/off toggle + volume slider `0.0`–`1.0` in the same UI area); no need to display the numeric value.
-- Persistence: save user preference (muted + volume) to `localStorage` and restore on next visit.
-- UX: keep audio controls reachable on mobile (tap targets ≥ ~44px) and avoid disruptive volume jumps (fade in/out when toggling).
+- Autoplay: do not attempt to start audio on page load (mobile browsers block it); start/resume only after an explicit user gesture.
+- Controls: two sliders in the audio panel:
+  - BGM volume (`0.0`–`1.0`) stored as `ng_bgm_volume`
+  - SFX volume (`0.0`–`1.0`) stored as `ng_sfx_volume`
+- Volume `0` mutes the respective channel.
+- UX: keep audio controls reachable on mobile (tap targets ≥ ~44px) and avoid disruptive volume jumps.
 
 ## Mobile-First
 - Primary target: smartphones and tablets; desktop is secondary.

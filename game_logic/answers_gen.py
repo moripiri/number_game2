@@ -1,131 +1,136 @@
 from __future__ import annotations
 
+import os
+from collections import defaultdict
 from fractions import Fraction
-from itertools import product
-from typing import Iterator, Optional
+from itertools import permutations, product
+from typing import DefaultDict, Dict, Iterable, List, Sequence, Tuple
+
+OPS: Tuple[str, ...] = ("+", "-", "*", "/")
 
 
-OPS = ("+", "-", "*", "/")
-
-
-def eval_no_parens_3(a: int, op1: str, b: int, op2: str, c: int) -> Fraction | None:
+def eval_no_parens(nums: Sequence[int], ops: Sequence[str]) -> Fraction | None:
     """
-    Evaluate: a op1 b op2 c with NO parentheses, using standard precedence:
-      * and / before + and -, left-to-right within same precedence.
-    Exact rational arithmetic via Fraction.
-    Returns None if division by zero occurs.
+    Evaluate: n0 op0 n1 op1 n2 ... with NO parentheses,
+    using standard precedence (*,/ before +,-) and left-to-right within same precedence.
+    Exact arithmetic via Fraction.
+    Return None if division by zero occurs.
     """
-    A = Fraction(a, 1)
-    B = Fraction(b, 1)
-    C = Fraction(c, 1)
-
-    # Case 1: op2 has higher precedence than op1: a op1 (b op2 c)
-    if op1 in ("+", "-") and op2 in ("*", "/"):
-        if op2 == "/":
-            if c == 0:
-                return None
-            bc = B / C
-        else:
-            bc = B * C
-
-        return (A + bc) if op1 == "+" else (A - bc)
-
-    # Case 2: op1 has higher precedence than op2: (a op1 b) op2 c
-    if op1 in ("*", "/") and op2 in ("+", "-"):
-        if op1 == "/":
-            if b == 0:
-                return None
-            ab = A / B
-        else:
-            ab = A * B
-
-        return (ab + C) if op2 == "+" else (ab - C)
-
-    # Case 3: same precedence: left-to-right
-    # (a op1 b) op2 c
-    # Note: for +/-, and */- same-prec categories, evaluate left-to-right.
-    # First compute ab
-    if op1 == "+":
-        ab = A + B
-    elif op1 == "-":
-        ab = A - B
-    elif op1 == "*":
-        ab = A * B
-    else:  # "/"
-        if b == 0:
-            return None
-        ab = A / B
-
-    # Then apply op2 with c
-    if op2 == "+":
-        return ab + C
-    if op2 == "-":
-        return ab - C
-    if op2 == "*":
-        return ab * C
-    # "/"
-    if c == 0:
+    if len(nums) == 0:
         return None
-    return ab / C
+    if len(ops) != len(nums) - 1:
+        raise ValueError("len(ops) must be len(nums)-1")
+
+    values = [Fraction(n, 1) for n in nums]
+    operators = list(ops)
+
+    # Pass 1: resolve * and / from left to right
+    i = 0
+    while i < len(operators):
+        op = operators[i]
+        if op in ("*", "/"):
+            a = values[i]
+            b = values[i + 1]
+            if op == "/":
+                if b == 0:
+                    return None
+                r = a / b
+            else:
+                r = a * b
+
+            values[i : i + 2] = [r]
+            operators.pop(i)
+            # stay at same i
+        else:
+            i += 1
+
+    # Pass 2: resolve + and - left-to-right
+    res = values[0]
+    for i, op in enumerate(operators):
+        b = values[i + 1]
+        if op == "+":
+            res += b
+        else:  # "-"
+            res -= b
+    return res
 
 
-def generate_all_no_parens_expressions(
-    t: int,
+def enumerate_targets_for_k(
     *,
+    k: int,
     lo: int = 1,
     hi: int = 9,
-    allowed_ops: tuple[str, ...] = OPS,
-    limit: Optional[int] = None,
-) -> Iterator[str]:
+    target_lo: int = 1,
+    target_hi: int = 99,
+    allowed_ops: Tuple[str, ...] = OPS,
+) -> Dict[int, List[str]]:
     """
-    Yield all expressions "a op1 b op2 c" (no parentheses) with a,b,c in [lo,hi]
-    and op1,op2 in allowed_ops that evaluate exactly to integer target t.
-    """
-    target = Fraction(t, 1)
-    produced = 0
+    Enumerate ALL expressions with:
+      - k distinct numbers in [lo,hi]
+      - k-1 operators in allowed_ops
+      - no parentheses
+    Evaluate them once and bucket by integer target in [target_lo, target_hi].
 
-    for a in range(lo, hi + 1):
-        for b in range(lo, hi + 1):
-            if b == a:
+    Returns: dict[target] -> list of expression strings.
+    """
+    if k < 2:
+        raise ValueError("k must be >= 2")
+    n_pool = list(range(lo, hi + 1))
+    if k > len(n_pool):
+        raise ValueError("k cannot exceed the size of the number pool")
+
+    buckets: DefaultDict[int, List[str]] = defaultdict(list)
+
+    for nums in permutations(n_pool, k):  # distinct numbers by construction
+        for ops in product(allowed_ops, repeat=k - 1):
+            v = eval_no_parens(nums, ops)
+            if v is None or v.denominator != 1:
                 continue
-            for c in range(lo, hi + 1):
-                if c == a or c == b:
-                    continue
-                for op1, op2 in product(allowed_ops, repeat=2):
-                    v = eval_no_parens_3(a, op1, b, op2, c)
-                    if v is None:
-                        continue
-                    if v == target:
-                        yield f"{a}{op1}{b}{op2}{c}"
-                        produced += 1
-                        if limit is not None and produced >= limit:
-                            return
+
+            tv = int(v)
+            if not (target_lo <= tv <= target_hi):
+                continue
+
+            parts = [str(nums[0])]
+            for o, n in zip(ops, nums[1:]):
+                parts.append(o)
+                parts.append(str(n))
+            buckets[tv].append("".join(parts))
+
+    return dict(buckets)
 
 
-def write_no_parens_expressions_to_file(
-    t: int,
-    path: str,
+def write_buckets(
+    buckets: Dict[int, List[str]],
+    out_dir: str,
     *,
-    lo: int = 1,
-    hi: int = 9,
-    limit: Optional[int] = None,
-) -> int:
-    cnt = 0
-    with open(path, "w", encoding="utf-8") as f:
-        for expr in generate_all_no_parens_expressions(t, lo=lo, hi=hi, limit=limit):
-            f.write(expr + "\n")
-            cnt += 1
-    return cnt
+    target_lo: int = 1,
+    target_hi: int = 99,
+) -> None:
+    os.makedirs(out_dir, exist_ok=True)
+    for t in range(target_lo, target_hi + 1):
+        exprs = buckets.get(t, [])
+        with open(os.path.join(out_dir, f"{t}.txt"), "w", encoding="utf-8") as f:
+            if exprs:
+                f.write("\n".join(exprs) + "\n")
 
 
 if __name__ == "__main__":
-    for i in range(1, 100):
-        target = i
-        # # 1) 앞 50개만 보기
-        # for i, e in enumerate(generate_all_no_parens_expressions(target, lo=1, hi=99), 1):
-        #     print(i, e)
-        
+    base_dir = "game_logic/answers"
+    lo, hi = 1, 9
+    target_lo, target_hi = 1, 99
 
-        # 2) 전부 파일로 저장 (결과가 많을 수 있으니 권장)
-        n = write_no_parens_expressions_to_file(target, f"game_logic/answers/{target}.txt", lo=1, hi=9)
-        print("written:", i)
+    for k in (4, 5):
+        print(f"Enumerating k={k} ...")
+        buckets = enumerate_targets_for_k(
+            k=k,
+            lo=lo,
+            hi=hi,
+            target_lo=target_lo,
+            target_hi=target_hi,
+        )
+        out_dir = os.path.join(base_dir, f"k{k}")
+        write_buckets(buckets, out_dir, target_lo=target_lo, target_hi=target_hi)
+
+        total = sum(len(v) for v in buckets.values())
+        print(f"done k={k}. total expressions written (within target range): {total}")
